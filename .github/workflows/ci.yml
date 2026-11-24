@@ -6,8 +6,6 @@ on:
   pull_request:
     branches: [main, dev]
   workflow_dispatch:
-  push:
-    branches: [stage1-foundation]
 
 # 逻辑全部在 scripts/ 里，这里只做编排 —— 换 GitLab CI 时 yaml 重写、脚本不动。
 jobs:
