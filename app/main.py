@@ -73,9 +73,9 @@ async def upload_document(
     if file.content_type and not file.content_type.startswith(("application/pdf", "image/")):
         raise HTTPException(status_code=415, detail="unsupported media type")
 
-    # [红绿实验] 故意移除魔数校验，观察 CI 是否拦截
-    # if suffix == ".pdf" and not content.startswith(b"%PDF"):
-    #     raise HTTPException(status_code=415, detail="PDF magic number mismatch")
+    # 简单魔数校验：PDF 必须以 %PDF 开头
+    if suffix == ".pdf" and not content.startswith(b"%PDF"):
+        raise HTTPException(status_code=415, detail="PDF magic number mismatch")
 
     doc_id = str(uuid.uuid4())
     _TENANT_DOCS[doc_id] = {
