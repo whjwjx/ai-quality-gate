@@ -132,12 +132,14 @@ def extract_fields(doc_id: str, x_tenant_id: str = Header(..., min_length=1)) ->
 
 @app.post("/api/v1/documents/{doc_id}/parse")
 def parse_document(doc_id: str, x_tenant_id: str = Header(..., min_length=1)) -> dict[str, str]:
-    """调用系统工具解析文档（SEED-002 命令注入仍待修复）。"""
+    """调用系统工具解析文档（已修复 SEED-002：不再经 shell 执行）。"""
     doc = _get_owned_document(doc_id, x_tenant_id)
     filename = str(doc["filename"])
+    # 参数列表 + shell=False：文件名里的 ; && | $() 不会被解释为命令分隔符。
+    # 代价是失去了 shell 展开能力，这里本来也不需要。
     result = subprocess.run(
-        f"file {filename}",
-        shell=True,
+        ["file", filename],
+        shell=False,
         capture_output=True,
         text=True,
     )
