@@ -21,9 +21,13 @@ useDefault = true
 #
 # 撤除条件：红绿实验演示完毕后，应连同假凭证文件一起删除。
 # ---------------------------------------------------------------------------
-[[allowlists]]
-description = "红绿实验占位凭证：该值公开放置在仓库中，不对应任何真实账号，无法调用任何 API"
-regexTarget = "secret"
+[allowlist]
+description = "红绿实验占位凭证：该值公开放置在仓库中，不对应任何真实账号"
+condition = "AND"
+paths = [
+  '''tests/security/fixtures/fake_github_token\.txt$''',
+]
+regexTarget = "match"
 regexes = [
-  '''^ghp_0123456789abcdefghijklmnopqrstuvwxyz$''',
+  '''ghp_0123456789abcdefghijklmnopqrstuvwxyz''',
 ]
