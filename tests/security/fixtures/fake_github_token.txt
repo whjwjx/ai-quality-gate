@@ -1,0 +1,5 @@
+# 红绿实验用假凭证
+# 仅用于验证 Gitleaks 能拦住凭证泄露，不对应任何真实账号或服务。
+# 格式符合 GitHub Personal Access Token 的形态（ghp_ + 36 位），但值是占位符。
+
+GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz
