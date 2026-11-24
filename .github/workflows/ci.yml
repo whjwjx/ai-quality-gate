@@ -38,3 +38,33 @@ jobs:
         with:
           name: test-reports
           path: reports/
+
+  # 评测门禁：证明「模型变差也能拦住」。独立 job 便于在 PR 上单独看到准确率结论。
+  eval-gate:
+    runs-on: ubuntu-latest
+    env:
+      CI: "true"
+      EXTRACTOR_BACKEND: replay
+      PROMPT_VERSION: v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: bash scripts/install.sh
+
+      - name: Extraction accuracy eval
+        run: bash scripts/test_eval.sh
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: reports/eval-report.md
