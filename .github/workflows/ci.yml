@@ -111,12 +111,17 @@ jobs:
           path: reports/semgrep.sarif
 
   # 依赖漏洞扫描：只阻断有修复方案的 HIGH/CRITICAL，否则门禁会被"上游还没修"的 CVE 卡死。
-  # 扫 requirements.lock 而不是 requirements.txt —— 后者用 >=，版本不确定的包会被跳过。
+  # 扫 requirements-lock.txt 而不是 requirements.txt：
+  #   - 后者用 >=，版本不确定的包会被 Trivy 跳过
+  #   - 文件名必须匹配 requirements*.txt，Trivy 才认作 pip 依赖清单
   sca-scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
 
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -126,6 +131,7 @@ jobs:
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          skip-dirs: .venv,.git,reports
           format: sarif
           output: reports/trivy.sarif
           exit-code: "1"
@@ -137,6 +143,7 @@ jobs:
           scan-type: fs
           scan-ref: .
           scanners: vuln
+          skip-dirs: .venv,.git,reports
           format: cyclonedx
           output: reports/sbom.json
 
