@@ -1,9 +1,0 @@
-# 锁定版本清单，供 Trivy 依赖扫描使用。
-# requirements.txt 用 >= 表达意图，这里记录实测通过的确切版本。
-# 只有版本确定的包才能被漏洞扫描，>= 会被 Trivy 跳过。
-fastapi==0.165.0
-uvicorn==0.54.0
-python-multipart==0.0.34
-pytest==9.2.0
-pytest-playwright==0.10.0
-httpx==0.28.1
