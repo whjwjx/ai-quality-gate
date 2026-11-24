@@ -104,13 +104,27 @@ def test_concurrent_uploads():
     assert all(code == 200 for code in statuses)
 
 
-# ---------- 多租户越权（当前预期失败 → 红绿实验用） ----------
+# ---------- 多租户越权（SEED-001 缺陷闭环） ----------
 
-@pytest.mark.xfail(
-    reason="SEED-001: get_document 尚未校验 tenant 归属，修复后此用例应 XPASS",
-    strict=True,
+@pytest.mark.parametrize(
+    "method,path,payload",
+    [
+        ("GET", "/api/v1/documents/{doc_id}", None),
+        ("POST", "/api/v1/extract?doc_id={doc_id}", None),
+        ("POST", "/api/v1/documents/{doc_id}/parse", None),
+    ],
 )
-def test_tenant_isolation_idor(uploaded_doc):
-    """租户 B 不应能读取租户 A 的文档，期望 403。"""
-    resp = client.get(f"/api/v1/documents/{uploaded_doc}", headers=HEADERS_B)
-    assert resp.status_code == 403
+def test_tenant_isolation_idor(uploaded_doc, method, path, payload):
+    """租户 B 不应能通过任何接口读取/操作租户 A 的文档，统一期望 403。
+
+    覆盖全部按 doc_id 访问资源的入口，防的是「新增接口忘记校验归属」这类复发问题。
+    """
+    url = path.format(doc_id=uploaded_doc)
+    resp = client.request(method, url, headers=HEADERS_B, json=payload)
+    assert resp.status_code == 403, f"{method} {url} 泄漏了跨租户资源：{resp.status_code}"
+
+
+def test_owner_can_still_access(uploaded_doc):
+    """回归保护：修复越权不能误伤正常访问——租户 A 仍能读自己的文档。"""
+    resp = client.get(f"/api/v1/documents/{uploaded_doc}", headers=HEADERS_A)
+    assert resp.status_code == 200

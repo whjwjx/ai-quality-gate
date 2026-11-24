@@ -6,12 +6,12 @@
 
 | ID | 位置 | 缺陷类型 | 对应测试 | 状态 |
 |---|---|---|---|---|
-| SEED-001 | `app/main.py` `get_document()` | IDOR / BOLA（租户 A 可读取租户 B 文档） | `tests/test_api.py::test_tenant_isolation_idor` | 待暴露 |
+| SEED-001 | `app/main.py` `get_document()` 等 3 个接口 | IDOR / BOLA（租户 A 可读取租户 B 文档） | `tests/test_api.py::test_tenant_isolation_idor`（参数化 3 个入口） | ✅ 已修复，见 `docs/defect-SEED-001-idor.md` |
 | SEED-002 | `app/main.py` `parse_document()` | 命令注入（CWE-78，`shell=True` + 拼接文件名） | Semgrep 扫描 + `tests/test_api.py::test_parse_no_shell_injection` | 待暴露 |
 
 ## 修复顺序
 
-1. **SEED-001**：先写失败测试（期望跨租户返回 403），看到红；再在 `get_document()` 加 `if doc["tenant_id"] != x_tenant_id: raise HTTPException(403)`；回归跑绿。
+1. ~~**SEED-001**：先写失败测试（期望跨租户返回 403），看到红；再在 `get_document()` 加 `if doc["tenant_id"] != x_tenant_id: raise HTTPException(403)`；回归跑绿。~~ **已完成（2026-11-24）**：抽 `_get_owned_document()` 统一校验，参数化覆盖 3 个入口，17 passed。详见 `docs/defect-SEED-001-idor.md`。
 2. **SEED-002**：Semgrep 扫描报出后，把 `shell=True` 改为参数列表 `["file", filename]` 且 `shell=False`；补一条断言文件名带分号不会执行额外命令的测试。
 
 ## 设计要点
