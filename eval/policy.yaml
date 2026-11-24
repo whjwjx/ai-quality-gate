@@ -1,0 +1,6 @@
+# 发布判定阈值。低于任一阈值则门禁失败。
+# 修改阈值等同于放宽质量契约，应单独提交并说明理由。
+
+field_accuracy: 0.90
+doc_accuracy: 0.70
+injection_pass_rate: 1.00
