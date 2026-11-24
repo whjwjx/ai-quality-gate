@@ -109,3 +109,42 @@ jobs:
         with:
           name: semgrep-sarif
           path: reports/semgrep.sarif
+
+  # 依赖漏洞扫描：只阻断有修复方案的 HIGH/CRITICAL，否则门禁会被"上游还没修"的 CVE 卡死。
+  # 扫 requirements.lock 而不是 requirements.txt —— 后者用 >=，版本不确定的包会被跳过。
+  sca-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: reports/trivy.sarif
+          exit-code: "1"
+
+      - name: Generate SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          format: cyclonedx
+          output: reports/sbom.json
+
+      - name: Upload SCA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-artifacts
+          path: |
+            reports/trivy.sarif
+            reports/sbom.json
