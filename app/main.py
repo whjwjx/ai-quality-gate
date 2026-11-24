@@ -29,6 +29,21 @@ class ExtractResponse(BaseModel):
     backend: str
 
 
+def _get_owned_document(doc_id: str, tenant_id: str) -> dict[str, object]:
+    """按 ID 取文档并校验租户归属。
+
+    所有按 doc_id 访问资源的接口都必须走这里，避免再次出现 SEED-001 类型的越权。
+    - 文档不存在 → 404
+    - 文档属于其他租户 → 403（比 404 更明确，便于审计与排查）
+    """
+    doc = _TENANT_DOCS.get(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    if doc["tenant_id"] != tenant_id:
+        raise HTTPException(status_code=403, detail="forbidden: resource belongs to another tenant")
+    return doc
+
+
 class UploadResponse(BaseModel):
     doc_id: str
     tenant_id: str
@@ -94,14 +109,8 @@ async def upload_document(
 
 @app.get("/api/v1/documents/{doc_id}", response_model=DocumentResponse)
 def get_document(doc_id: str, x_tenant_id: str = Header(..., min_length=1)) -> DocumentResponse:
-    """按 ID 读取文档元数据。
-
-    种子缺陷 #1（IDOR）：此处未校验 doc.tenant_id 是否等于 x_tenant_id，
-    导致租户 A 可以通过猜 ID 读取租户 B 的文档。修复见 SEEDED_ISSUES.md。
-    """
-    doc = _TENANT_DOCS.get(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="document not found")
+    """按 ID 读取文档元数据（已修复 SEED-001：校验租户归属）。"""
+    doc = _get_owned_document(doc_id, x_tenant_id)
     return DocumentResponse(
         doc_id=doc_id,
         tenant_id=str(doc["tenant_id"]),
@@ -113,9 +122,7 @@ def get_document(doc_id: str, x_tenant_id: str = Header(..., min_length=1)) -> D
 @app.post("/api/v1/extract", response_model=ExtractResponse)
 def extract_fields(doc_id: str, x_tenant_id: str = Header(..., min_length=1)) -> ExtractResponse:
     """字段抽取（回放占位版）。阶段 2 会接入可替换的 Extractor。"""
-    doc = _TENANT_DOCS.get(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="document not found")
+    _get_owned_document(doc_id, x_tenant_id)
     return ExtractResponse(
         doc_id=doc_id,
         fields={"doc_type": "unknown", "backend": "replay-stub"},
@@ -125,14 +132,8 @@ def extract_fields(doc_id: str, x_tenant_id: str = Header(..., min_length=1)) ->
 
 @app.post("/api/v1/documents/{doc_id}/parse")
 def parse_document(doc_id: str, x_tenant_id: str = Header(..., min_length=1)) -> dict[str, str]:
-    """调用系统工具解析文档。
-
-    种子缺陷 #2（命令注入）：filename 直接拼接进 shell 命令。
-    安全扫描（Semgrep）应报出 CWE-78，修复见 SEEDED_ISSUES.md。
-    """
-    doc = _TENANT_DOCS.get(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="document not found")
+    """调用系统工具解析文档（SEED-002 命令注入仍待修复）。"""
+    doc = _get_owned_document(doc_id, x_tenant_id)
     filename = str(doc["filename"])
     result = subprocess.run(
         f"file {filename}",
