@@ -1,0 +1,51 @@
+# Semgrep 自定义规则集。
+#
+# 为什么自己写规则而不是直接用 registry 的 p/python：
+#   1. registry 规则多，会产生大量与本项目无关的告警，门禁会被噪音淹没
+#   2. 自己写的规则能说清"防的是哪一类问题"，面试时讲得出来
+#   3. 不依赖网络拉规则，CI 更快更稳
+#
+# 每条规则都必须标注 CWE 与 OWASP 类别 —— 这是"发现"到"判断"的桥梁。
+
+rules:
+  - id: python-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: >-
+      subprocess 调用使用了 shell=True，命令字符串会被 shell 解释。
+      如果字符串里拼入了文件名、URL 等外部输入，就构成命令注入（CWE-78）。
+      修复：改用参数列表并把 shell 设为 False。
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+    metadata:
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      owasp: "A03:2021 - Injection"
+      confidence: HIGH
+
+  - id: python-eval-or-exec
+    languages: [python]
+    severity: ERROR
+    message: >-
+      eval/exec 会把字符串当作代码执行。若字符串来自外部输入，
+      可导致任意代码执行（CWE-95）。修复：改用显式解析或白名单分派。
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      owasp: "A03:2021 - Injection"
+      confidence: MEDIUM
+
+  - id: python-yaml-load-unsafe
+    languages: [python]
+    severity: ERROR
+    message: >-
+      yaml.load 不使用 SafeLoader 时可以构造任意 Python 对象，导致反序列化攻击（CWE-502）。
+      修复：改用 yaml.safe_load。
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"
+      confidence: HIGH

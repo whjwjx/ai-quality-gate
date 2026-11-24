@@ -84,3 +84,28 @@ jobs:
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 静态代码分析：规则在 security/semgrep-rules.yaml，自行维护避免 registry 噪音。
+  sast-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install semgrep
+        run: pip install semgrep
+
+      - name: Semgrep SAST
+        run: bash scripts/scan_sast.sh
+
+      - name: Upload SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-sarif
+          path: reports/semgrep.sarif
