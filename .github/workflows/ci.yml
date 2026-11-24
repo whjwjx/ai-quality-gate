@@ -68,3 +68,19 @@ jobs:
         with:
           name: eval-report
           path: reports/eval-report.md
+
+  # 凭证扫描：密钥泄露零容忍，任何发现都阻断。
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 必须取完整历史。默认 fetch-depth: 1 只扫最后一个 commit，
+          # 历史提交里残留的密钥会被漏掉。
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
