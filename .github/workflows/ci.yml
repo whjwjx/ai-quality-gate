@@ -1,9 +1,11 @@
 name: CI Quality Gate
 
 # PR 触发：任何向 main / dev 的 PR 都必须先过这一关。
+# workflow_dispatch：允许手动重跑，便于排查与演示。
 on:
   pull_request:
     branches: [main, dev]
+  workflow_dispatch:
 
 # 逻辑全部在 scripts/ 里，这里只做编排 —— 换 GitLab CI 时 yaml 重写、脚本不动。
 jobs:
