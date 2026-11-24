@@ -1,0 +1,38 @@
+name: CI Quality Gate
+
+# PR 触发：任何向 main / dev 的 PR 都必须先过这一关。
+on:
+  pull_request:
+    branches: [main, dev]
+
+# 逻辑全部在 scripts/ 里，这里只做编排 —— 换 GitLab CI 时 yaml 重写、脚本不动。
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: bash scripts/install.sh
+
+      - name: API tests
+        run: bash scripts/test_api.sh
+
+      - name: E2E smoke
+        run: bash scripts/test_e2e.sh
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/

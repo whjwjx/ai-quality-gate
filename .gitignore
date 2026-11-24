@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Test reports & generated fixtures
+reports/
+tests/fixtures/
+
+# WorkBuddy workspace data
+.workbuddy/
+
+# Personal notes (keep local, never publish)
+notes-a/
+notes-b/
+学习路线.md
+理论知识清单.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
