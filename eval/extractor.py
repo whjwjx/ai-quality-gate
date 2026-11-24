@@ -57,11 +57,15 @@ class ReplayExtractor:
 
 
 class LLMExtractor:
-    """真实调用 DeepSeek，只用于本地录制快照。CI 中不启用。"""
+    """真实调用 DeepSeek，只用于本地录制快照。CI 中不启用。
+
+    模型名按官方文档：base_url 为 https://api.deepseek.com（不带 /v1），
+    端点 /chat/completions，便宜模型名为 deepseek-flash（由 V4.1-Flash 提供服务）。
+    """
 
     def __init__(self, prompt_version: str, model: str | None = None):
         self.prompt_version = prompt_version
-        self.model = model or os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+        self.model = model or os.environ.get("DEEPSEEK_MODEL", "deepseek-flash")
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise RuntimeError(
