@@ -211,7 +211,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push image
+      - name: Push signed image
         id: push
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
@@ -219,6 +219,15 @@ jobs:
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" | cut -d@ -f2)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "pushed digest: $DIGEST"
+
+      - name: Push an UNSIGNED counterpart for the admission test
+        run: |
+          # --label 会改变镜像 config，因此 digest 与已签名镜像不同。
+          # 这正是准入实验需要的对照物：内容不同，且没有签名。
+          UNSIGNED=ghcr.io/${{ github.repository }}:unsigned
+          docker build -t "$UNSIGNED" --label org.example.signed=false .
+          docker push "$UNSIGNED" | tail -2
+          docker inspect --format='{{index .RepoDigests 0}}' "$UNSIGNED"
 
       - name: Sign image by digest
         env:
@@ -282,23 +291,6 @@ jobs:
             --docker-password=${{ secrets.GITHUB_TOKEN }}
           kubectl patch serviceaccount default \
             -p '{"imagePullSecrets":[{"name":"ghcr-auth"}]}'
-
-      - name: Log in to GHCR to build an unsigned counterpart
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push an UNSIGNED image (different digest)
-        run: |
-          # --label 会改变镜像 config，因此 digest 与已签名镜像不同。
-          # 这正是要测的场景：内容不同、且没有签名。
-          UNSIGNED=ghcr.io/${{ github.repository }}:unsigned
-          docker build -t "$UNSIGNED" --label org.example.signed=false .
-          docker push "$UNSIGNED" | tail -2
-          echo "unsigned ref: $UNSIGNED"
-          docker inspect --format='{{index .RepoDigests 0}}' "$UNSIGNED"
 
       - name: "Red A · no policy → unsigned image is admitted"
         run: |
