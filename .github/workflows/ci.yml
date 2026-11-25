@@ -260,6 +260,59 @@ jobs:
           name: image-scan-report
           path: reports/trivy-image.sarif
 
+  # 闭环：扫描失败时把发现落成 Issue，而不是只留在日志里。
+  # 这不是门禁（不阻断合并），而是 Memory —— 让问题可追踪、可分配、可复盘。
+  # 幂等由 scripts/issue_reporter.py 保证：同一指纹只更新，不重复建单。
+  issue-sync:
+    needs: sca-scan
+    if: always() && needs.sca-scan.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download SCA report
+        uses: actions/download-artifact@v4
+        with:
+          name: sca-artifacts
+          path: reports
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync findings to issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m scripts.report_findings reports/trivy.sarif
+
+  # 例外到期检查：给发现打 exception:expire-YYYY-MM-DD 标签，
+  # 到期后自动移除标签并评论提醒，防止"临时豁免"变成永久豁免。
+  exception-audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Expire outdated exceptions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m scripts.expire_exceptions
+  # 红绿 A：没有策略时，未签名的镜像照样能跑 —— 说明只签名等于没控制。
+  # 红绿 B：启用策略后，未签名镜像被准入控制器拒绝。
   # 准入验证：证明「签名」和「验证」是两件事。
   # 红绿 A：没有策略时，未签名的镜像照样能跑 —— 说明只签名等于没控制。
   # 红绿 B：启用策略后，未签名镜像被准入控制器拒绝。
@@ -335,3 +388,48 @@ jobs:
             exit 1
           fi
           echo "✅ 未签名镜像被准入控制器拒绝"
+
+  # Pager：门禁失败时把消息推到飞书，而不是等人想起来去看 Actions。
+  # 关键约束：只对 dev/main 告警。PR 失败也发消息的话，一天几十条，
+  # 一周后所有人静音群 —— 那比不接告警更糟。
+  notify-on-failure:
+    needs:
+      - quality-gate
+      - eval-gate
+      - secret-scan
+      - sast-scan
+      - sca-scan
+      - image-pipeline
+      - admission-verify
+    if: always() && failure() && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Collect failed jobs and notify Feishu
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+        run: |
+          FAILED=""
+          [ "${{ needs.quality-gate.result }}" = "failure" ] && FAILED="$FAILED quality-gate"
+          [ "${{ needs.eval-gate.result }}" = "failure" ] && FAILED="$FAILED eval-gate"
+          [ "${{ needs.secret-scan.result }}" = "failure" ] && FAILED="$FAILED secret-scan"
+          [ "${{ needs.sast-scan.result }}" = "failure" ] && FAILED="$FAILED sast-scan"
+          [ "${{ needs.sca-scan.result }}" = "failure" ] && FAILED="$FAILED sca-scan"
+          [ "${{ needs.image-pipeline.result }}" = "failure" ] && FAILED="$FAILED image-pipeline"
+          [ "${{ needs.admission-verify.result }}" = "failure" ] && FAILED="$FAILED admission-verify"
+          [ -z "$FAILED" ] && FAILED="（未能识别，请查看运行日志）"
+
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT=$(printf '🔴 门禁失败\n失败项：%s\n提交：%s\n作者：%s\n详情：%s' \
+            "$FAILED" "${GITHUB_SHA:0:7}" "${{ github.actor }}" "$RUN_URL")
+
+          # 用脚本而不是 curl 拼 JSON：签名要算 HmacSHA256，bash 里做不干净
+          python -m scripts.notify_feishu "$TEXT"
