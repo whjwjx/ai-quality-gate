@@ -1,0 +1,50 @@
+# Kyverno 准入策略：只允许「由本项目私钥签名」的镜像进入集群。
+#
+# 这是整条供应链的最后一环：
+#   - Cosign 签名只证明「这个 digest 是我签的」
+#   - 只有准入控制器在**部署时**检查签名，才真正阻止未签名镜像运行
+#
+# 没有这条策略，签名只是个装饰 —— 任何人都能推镜像进集群。
+#
+# 注意 API 版本：Kyverno v1.20 起，legacy 的 kyverno.io/v1 ClusterPolicy
+# 已不再接受创建请求，必须用 CEL 驱动的 policies.kyverno.io/v1 ImageValidatingPolicy。
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: verify-image-signature
+  annotations:
+    policies.kyverno.io/title: Verify image signature
+    policies.kyverno.io/description: >-
+      拒绝未经本项目 Cosign 私钥签名的镜像，防止供应链替换攻击。
+spec:
+  webhookConfiguration:
+    timeoutSeconds: 30
+  evaluation:
+    background:
+      enabled: false
+  # Deny = 直接拒绝。对照实验靠「先不部署本策略」来实现，而不是改这里。
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: ['v1']
+        operations: ['CREATE', 'UPDATE']
+        resources: ['pods']
+  matchImageReferences:
+    - glob: 'ghcr.io/whjwjx/ai-quality-gate*'
+  attestors:
+    - name: cosign
+      cosign:
+        key:
+          # 公钥来自仓库根目录的 cosign.pub，与 CI 签名用的私钥配对
+          data: |
+            -----BEGIN PUBLIC KEY-----
+            MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENcdjj15O+kNbuRWlo5+fV/B14yl+
+            zwwA798LxgJbQoZvuzeVC7mpu13jfp1OIsqKSpUsShP/pP90CynP8eKjMg==
+            -----END PUBLIC KEY-----
+        # 签名时用了 --tlog-upload=false，所以不存在 Rekor 条目，
+        # key 模式下无需额外配置 tlog 忽略选项。
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
+      message: "镜像未通过签名验证：只接受由本项目私钥签名的镜像"

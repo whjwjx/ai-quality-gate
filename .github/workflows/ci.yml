@@ -155,3 +155,183 @@ jobs:
           path: |
             reports/trivy.sarif
             reports/sbom.json
+
+  # 镜像供应链：构建 → 扫描 → 推 GHCR → 签名 → 验签。
+  # 签名只证明"这个 digest 是我签的"，不证明"集群会检查它"——
+  # 后者要靠 Kyverno 准入策略，见 admission-verify job。
+  image-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Build image
+        run: |
+          # --provenance=false：BuildKit 默认附加 provenance attestation，
+          # 会把镜像变成 manifest list。那样签名签的是 list 的 digest，
+          # 而准入控制器解析到的是平台 manifest 的 digest，两者对不上，
+          # 导致「已签名镜像也被拒绝」。关掉它让 digest 唯一。
+          docker build --provenance=false \
+            -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: reports/trivy-image.sarif
+          exit-code: "1"
+
+      - name: Verify image runs as non-root
+        run: |
+          docker run -d --name probe -p 8000:8000 ghcr.io/${{ github.repository }}:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "health endpoint reachable"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/health
+          echo ""
+          echo -n "container uid: "
+          docker exec probe id -u
+          docker rm -f probe
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push signed image
+        id: push
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker push "$IMAGE" | tail -3
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" | cut -d@ -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "pushed digest: $DIGEST"
+
+      - name: Push an UNSIGNED counterpart for the admission test
+        run: |
+          # --label 会改变镜像 config，因此 digest 与已签名镜像不同。
+          # 这正是准入实验需要的对照物：内容不同，且没有签名。
+          UNSIGNED=ghcr.io/${{ github.repository }}:unsigned
+          docker build --provenance=false -t "$UNSIGNED" --label org.example.signed=false .
+          docker push "$UNSIGNED" | tail -2
+          docker inspect --format='{{index .RepoDigests 0}}' "$UNSIGNED"
+
+      - name: Sign image by digest
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+        run: |
+          # 按 digest 签名而不是 tag：tag 可以被覆盖，digest 是内容寻址。
+          # 必须上传 tlog（默认行为）：准入控制器会校验透明日志条目，
+          # 用 --tlog-upload=false 签出来的签名会被 Kyverno 判为无效。
+          cosign sign --yes \
+            --key env://COSIGN_PRIVATE_KEY \
+            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
+
+      - name: Verify signature with public key
+        run: |
+          cosign verify \
+            --key cosign.pub \
+            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
+
+      - name: Upload image scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-scan-report
+          path: reports/trivy-image.sarif
+
+  # 准入验证：证明「签名」和「验证」是两件事。
+  # 红绿 A：没有策略时，未签名的镜像照样能跑 —— 说明只签名等于没控制。
+  # 红绿 B：启用策略后，未签名镜像被准入控制器拒绝。
+  admission-verify:
+    needs: image-pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: supply-chain
+
+      - name: Install Kyverno
+        run: |
+          # 必须用 server-side apply：Kyverno 的 CRD 超过 256KB，
+          # 客户端 apply 会把它塞进 last-applied-configuration 注解，触发注解长度上限。
+          kubectl apply --server-side=true \
+            -f https://github.com/kyverno/kyverno/releases/latest/download/install.yaml
+          kubectl -n kyverno wait --for=condition=Ready pods --all --timeout=300s
+          kubectl wait --for=condition=Established crd/clusterpolicies.kyverno.io --timeout=120s
+
+      - name: Allow cluster to pull from GHCR
+        run: |
+          kubectl create secret docker-registry ghcr-auth \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }}
+          kubectl patch serviceaccount default \
+            -p '{"imagePullSecrets":[{"name":"ghcr-auth"}]}'
+
+      - name: "Red A · no policy → unsigned image is admitted"
+        run: |
+          UNSIGNED=ghcr.io/${{ github.repository }}:unsigned
+          kubectl run probe-unsigned --image="$UNSIGNED" --port=8000
+          kubectl wait --for=condition=Ready pod/probe-unsigned --timeout=240s
+          echo "✅ 未启用策略时，未签名镜像成功运行 —— 证明签名本身不构成控制"
+          kubectl delete pod probe-unsigned --wait=false
+
+      - name: Apply verifyImages policy
+        run: |
+          kubectl apply -f policies/verify-images.yaml
+          kubectl get imagevalidatingpolicy verify-image-signature
+          # 等 webhook 完成注册并缓存策略
+          sleep 15
+          kubectl get imagevalidatingpolicy verify-image-signature \
+            -o jsonpath='{.status}' || true
+
+      - name: "Red B · policy on → signed admitted, unsigned rejected"
+        run: |
+          SIGNED=ghcr.io/${{ github.repository }}:${{ github.sha }}
+          UNSIGNED=ghcr.io/${{ github.repository }}:unsigned
+
+          echo "--- 已签名镜像应当被放行 ---"
+          kubectl run probe-signed --image="$SIGNED" --port=8000
+          kubectl wait --for=condition=Ready pod/probe-signed --timeout=240s
+          echo "✅ 已签名镜像正常准入"
+
+          echo "--- 未签名镜像应当被拒绝 ---"
+          set +e
+          OUTPUT=$(kubectl run probe-reject --image="$UNSIGNED" --port=8000 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $STATUS -eq 0 ]; then
+            echo "❌ 策略未生效：未签名镜像被准入"
+            kubectl delete pod probe-reject --wait=false || true
+            exit 1
+          fi
+          echo "✅ 未签名镜像被准入控制器拒绝"
