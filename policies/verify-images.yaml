@@ -42,9 +42,8 @@ spec:
             MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENcdjj15O+kNbuRWlo5+fV/B14yl+
             zwwA798LxgJbQoZvuzeVC7mpu13jfp1OIsqKSpUsShP/pP90CynP8eKjMg==
             -----END PUBLIC KEY-----
-        # 签名时用了 --tlog-upload=false，这里必须对应忽略 tlog，
-        # 否则会去 Rekor 查一个不存在的条目。
-        insecureIgnoreTlog: true
+        # 签名时用了 --tlog-upload=false，所以不存在 Rekor 条目，
+        # key 模式下无需额外配置 tlog 忽略选项。
   validations:
     - expression: >-
         images.containers.map(image, verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
