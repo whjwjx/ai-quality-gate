@@ -18,12 +18,18 @@ import urllib.request
 
 
 def sign(secret: str, timestamp: str) -> str:
-    """按飞书规则算签名。"""
+    """按飞书规则算签名。
+
+    注意这里和"标准"HMAC 用法不同，是飞书的特殊约定：
+        stringToSign = timestamp + "\n" + secret
+        sign = base64(hmac_sha256(key=stringToSign, msg=""))
+    即把 stringToSign 当作 key，消息体留空。
+    写成 hmac.new(secret, stringToSign) 会一直报 19021 sign match fail。
+    """
     string_to_sign = f"{timestamp}\n{secret}"
     digest = hmac.new(
-        secret.encode("utf-8"),
         string_to_sign.encode("utf-8"),
-        hashlib.sha256,
+        digestmod=hashlib.sha256,
     ).digest()
     return base64.b64encode(digest).decode("utf-8")
 
