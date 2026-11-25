@@ -401,7 +401,7 @@ jobs:
       - sca-scan
       - image-pipeline
       - admission-verify
-    if: always() && failure()  # TEMP: 测试用，验证后收紧为 dev only
+    if: always() && failure() && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
