@@ -388,3 +388,40 @@ jobs:
             exit 1
           fi
           echo "✅ 未签名镜像被准入控制器拒绝"
+
+  # Pager：门禁失败时把消息推到飞书，而不是等人想起来去看 Actions。
+  # 关键约束：只对 dev/main 告警。PR 失败也发消息的话，一天几十条，
+  # 一周后所有人静音群 —— 那比不接告警更糟。
+  notify-on-failure:
+    needs:
+      - quality-gate
+      - eval-gate
+      - secret-scan
+      - sast-scan
+      - sca-scan
+      - image-pipeline
+      - admission-verify
+    if: always() && failure()  # TEMP: 测试用，验证后收紧为 dev only
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect failed jobs and notify Feishu
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          FAILED=""
+          [ "${{ needs.quality-gate.result }}" = "failure" ] && FAILED="$FAILED quality-gate"
+          [ "${{ needs.eval-gate.result }}" = "failure" ] && FAILED="$FAILED eval-gate"
+          [ "${{ needs.secret-scan.result }}" = "failure" ] && FAILED="$FAILED secret-scan"
+          [ "${{ needs.sast-scan.result }}" = "failure" ] && FAILED="$FAILED sast-scan"
+          [ "${{ needs.sca-scan.result }}" = "failure" ] && FAILED="$FAILED sca-scan"
+          [ "${{ needs.image-pipeline.result }}" = "failure" ] && FAILED="$FAILED image-pipeline"
+          [ "${{ needs.admission-verify.result }}" = "failure" ] && FAILED="$FAILED admission-verify"
+          [ -z "$FAILED" ] && FAILED="（未能识别，请查看运行日志）"
+
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT=$(printf '🔴 dev 门禁失败\n失败项：%s\n提交：%s\n作者：%s\n详情：%s' \
+            "$FAILED" "${GITHUB_SHA:0:7}" "${{ github.actor }}" "$RUN_URL")
+
+          # 用 jq 生成 JSON，避免中文/换行破坏 payload
+          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+            | curl -sS -X POST "$FEISHU_WEBHOOK" -H "Content-Type: application/json" -d @-
