@@ -1,0 +1,18 @@
+# 缩小 build context：这些都不该进镜像，也不该被传给 Docker daemon。
+.venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+.pytest_cache/
+reports/
+snapshots/
+evalsets/
+eval/
+prompts/
+security/
+docs/
+tests/
+requirements.txt
+requirements-app.txt
+*.md

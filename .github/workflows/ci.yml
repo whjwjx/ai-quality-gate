@@ -155,3 +155,51 @@ jobs:
           path: |
             reports/trivy.sarif
             reports/sbom.json
+
+  # 镜像层扫描：代码依赖没问题，不代表打出来的镜像没问题。
+  # 基础镜像自带的 OS 包、构建残留，都只有扫镜像才看得见。
+  image-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t docextract:${{ github.sha }} .
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: docextract:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: reports/trivy-image.sarif
+          exit-code: "1"
+
+      - name: Verify image runs as non-root
+        run: |
+          docker run -d --name probe -p 8000:8000 docextract:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "health endpoint reachable"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/health
+          echo ""
+          docker inspect --format '{{.Config.User}}' docextract:${{ github.sha }}
+          docker exec probe id -u
+          docker rm -f probe
+
+      - name: Upload image scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-scan-report
+          path: reports/trivy-image.sarif

@@ -1,0 +1,7 @@
+# 运行时依赖（进镜像）。与 requirements.txt 分开：
+#   - requirements.txt 含 pytest / playwright，是测试环境用的，进了镜像只会
+#     让体积翻倍、攻击面变大（Trivy 会因此报出更多无关 CVE）
+#   - 这里只保留应用启动真正需要的包
+fastapi==0.165.0
+uvicorn==0.54.0
+python-multipart==0.0.34
