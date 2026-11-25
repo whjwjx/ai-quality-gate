@@ -104,14 +104,65 @@ security 类 Issue 数量: 3     ← 没有变成 6
 
 **为什么用标签而不是 Issue 里的文字**：标签可搜索、可统计、可做趋势图。写在正文里的"高危"只能靠人读。
 
-## 六、还差的（Pager）
+## 六、Pager：让"红了"变成"有人知道"
 
-本阶段只做了 Memory。Pager 仍是空的：
+Memory 解决"有记录"，但不解决"有感知"。Issue 建了，如果你一整天不打开 GitHub，
+等于没建。
+
+### 实现
+
+`notify-on-failure` job：门禁失败时推飞书群消息。
+
+```yaml
+if: always() && failure() && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+```
+
+**这个条件里最重要的部分不是 `failure()`，是分支限制。**
+
+如果 PR 失败也发消息，一天几十条，一周后所有人静音群 —— **那比不接告警更糟**。
+告警的价值不在"发得多"，在"发的每条都值得看"。
+
+### 飞书签名：一个反直觉的坑
+
+飞书自定义机器人开启「签名校验」后，必须带 `timestamp` 和 `sign`。
+算法看起来是标准 HMAC，但**参数位置和标准用法相反**：
+
+```python
+string_to_sign = f"{timestamp}\n{secret}"
+# 飞书要求：stringToSign 当 key，消息体留空
+digest = hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
+```
+
+写成常见的 `hmac.new(key=secret, msg=stringToSign)` 会一直报：
+
+```
+{"code": 19021, "msg": "sign match fail or timestamp is not within one hour"}
+```
+
+这个错误信息同时提到"时间戳超时"，很容易误判成时钟问题。**实际是签名算法错了。**
+
+### 告警内容
+
+```
+🔴 门禁失败
+失败项： quality-gate sca-scan
+提交：f59be24
+作者：whjwjx
+详情：https://github.com/.../actions/runs/...
+```
+
+`失败项` 是通过 `needs.<job>.result` 逐个判断拼出来的——只说"失败了"没有意义，
+要说清**哪个门禁挂了**。
+
+## 七、仍然缺的（度量层）
 
 | 缺的 | 影响 |
 |---|---|
-| main 分支失败告警 | 合并后坏了没人知道 |
 | 高危 Issue 数量趋势 | 不知道质量在变好还是变坏 |
 | MTTR（平均修复时长） | 无法回答"我们处理得多快" |
+| on-call 轮值与升级 | 告警发了，但没规定谁必须响应 |
 
-这些属于"度量与告警"层面，是后续可以补的部分。但**先把闭环做对，再谈度量**——没有可靠的 Issue 数据，趋势图只是噪音。
+前两项是**度量**，第三项是**流程**。技术能保证"消息发出去"，保证不了"有人必须处理"。
+
+**先把闭环做对，再谈度量**——没有可靠的 Issue 数据，趋势图只是噪音。
+
