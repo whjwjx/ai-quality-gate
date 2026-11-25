@@ -241,17 +241,15 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
         run: |
           # 按 digest 签名而不是 tag：tag 可以被覆盖，digest 是内容寻址。
-          # --tlog-upload=false：不写 Sigstore 透明日志，避免准入验证时依赖 Rekor 可用性。
-          # 生产环境应当开启 tlog，这样即使私钥泄露也能追溯伪造。
+          # 必须上传 tlog（默认行为）：准入控制器会校验透明日志条目，
+          # 用 --tlog-upload=false 签出来的签名会被 Kyverno 判为无效。
           cosign sign --yes \
-            --tlog-upload=false \
             --key env://COSIGN_PRIVATE_KEY \
             ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
 
       - name: Verify signature with public key
         run: |
           cosign verify \
-            --insecure-ignore-tlog=true \
             --key cosign.pub \
             ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
 
