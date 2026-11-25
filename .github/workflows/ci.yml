@@ -156,25 +156,32 @@ jobs:
             reports/trivy.sarif
             reports/sbom.json
 
-  # 镜像层扫描：代码依赖没问题，不代表打出来的镜像没问题。
-  # 基础镜像自带的 OS 包、构建残留，都只有扫镜像才看得见。
-  image-scan:
+  # 镜像供应链：构建 → 扫描 → 推 GHCR → 签名 → 验签。
+  # 签名只证明"这个 digest 是我签的"，不证明"集群会检查它"——
+  # 后者要靠 Kyverno 准入策略，见 admission-verify job。
+  image-pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build image
-        run: docker build -t docextract:${{ github.sha }} .
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
 
       - name: Prepare reports directory
         run: mkdir -p reports
+
+      - name: Build image
+        run: docker build -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
-          image-ref: docextract:${{ github.sha }}
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           format: sarif
@@ -183,7 +190,7 @@ jobs:
 
       - name: Verify image runs as non-root
         run: |
-          docker run -d --name probe -p 8000:8000 docextract:${{ github.sha }}
+          docker run -d --name probe -p 8000:8000 ghcr.io/${{ github.repository }}:${{ github.sha }}
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8000/health > /dev/null 2>&1; then
               echo "health endpoint reachable"
@@ -193,9 +200,41 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8000/health
           echo ""
-          docker inspect --format '{{.Config.User}}' docextract:${{ github.sha }}
+          echo -n "container uid: "
           docker exec probe id -u
           docker rm -f probe
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        id: push
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker push "$IMAGE" | tail -3
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" | cut -d@ -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "pushed digest: $DIGEST"
+
+      - name: Sign image by digest
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+        run: |
+          # 按 digest 签名而不是 tag：tag 可以被覆盖，digest 是内容寻址
+          cosign sign --yes \
+            --key env://COSIGN_PRIVATE_KEY \
+            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
+
+      - name: Verify signature with public key
+        run: |
+          cosign verify \
+            --key cosign.pub \
+            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
 
       - name: Upload image scan report
         if: always()
