@@ -1,6 +1,8 @@
-fastapi>=0.115
-uvicorn>=0.32
-python-multipart>=0.0.20
-pytest>=8.3
-pytest-playwright>=0.7
-httpx>=0.28
+# 固定版本而非 >=：CI 需要确定性，也让 Trivy 能真正扫描依赖漏洞
+# （版本不确定的包会被 Trivy 跳过，门禁就变成永远绿的摆设）。
+fastapi==0.165.0
+uvicorn==0.54.0
+python-multipart==0.0.34
+pytest==9.2.0
+pytest-playwright==0.10.0
+httpx==0.28.1

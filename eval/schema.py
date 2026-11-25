@@ -61,3 +61,40 @@ def normalize(field: str, value: object) -> str | None:
 
 def expected_fields(doc_type: str) -> list[str]:
     return FIELD_SCHEMA.get(doc_type, [])
+
+
+_WS_AND_MONEY = re.compile(r"[¥￥$,，\s\u3000]")
+_CN_DATE = re.compile(r"(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?")
+
+
+def _pad_date(m: re.Match[str]) -> str:
+    """把 2026年2月10日 / 2026-2-10 统一成补零的 2026-02-10。"""
+    y, mo, d = m.groups()
+    return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+
+
+def normalize_document(text: str) -> str:
+    """把原文压成可搜索的紧凑字符串，用于 grounding 校验。
+
+    与 normalize() 的目标一致：消除"格式差异"，只留"内容"。
+    三步：日期补零统一 → 去掉货币符号与千分位 → 去掉所有空白。
+
+    注意这个变换是有损的（丢掉了词边界），所以 grounding 只能判断
+    "某个值是否可能来自原文"，不能反推原文结构。
+    """
+    text = _CN_DATE.sub(_pad_date, text)
+    return _WS_AND_MONEY.sub("", text)
+
+
+def grounding_candidates(field: str, value: str) -> set[str]:
+    """输出值在原文里可能的书写形式。
+
+    归一化只解决"格式"，解决不了"精度"：原文写 18,500，模型输出 18500.00。
+    所以对数值字段额外提供去掉末尾零的变体，避免把正确的抽取判成无中生有。
+    """
+    candidates = {value}
+    if field in NUMERIC_FIELDS and "." in value:
+        trimmed = value.rstrip("0").rstrip(".")
+        if trimmed:
+            candidates.add(trimmed)
+    return candidates

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
@@ -128,3 +129,48 @@ def test_owner_can_still_access(uploaded_doc):
     """回归保护：修复越权不能误伤正常访问——租户 A 仍能读自己的文档。"""
     resp = client.get(f"/api/v1/documents/{uploaded_doc}", headers=HEADERS_A)
     assert resp.status_code == 200
+
+
+# ---------- 命令注入（SEED-002 缺陷闭环） ----------
+
+def test_parse_does_not_use_shell(monkeypatch):
+    """解析接口不得经由 shell 执行命令（CWE-78 回归）。
+
+    断言的是调用契约而非运行结果：shell=False 且命令以参数列表传入。
+    只要保持这个契约，文件名里的 ; && | $() 都不会被解释成命令分隔符。
+
+    为什么不跑真实命令：`file` 命令只在 Linux 存在，且 shell=True 在
+    中文 Windows 下的输出是 GBK，text=True 按 UTF-8 解码会抛异常，
+    导致"输出为空 → 注入标记不在输出里 → 测试假绿"。验证契约没有这个问题。
+    """
+    captured: dict[str, object] = {}
+
+    def fake_run(*args, **kwargs):
+        captured["cmd"] = args[0] if args else kwargs.get("args")
+        captured["kwargs"] = kwargs
+
+        class _Result:
+            stdout = ""
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    marker = "INJECTED_BY_TEST"
+    resp = client.post(
+        "/api/v1/documents/upload",
+        files={"file": (f"probe; echo {marker}.pdf", b"%PDF-1.4\n% injection probe\n", "application/pdf")},
+        headers=HEADERS_A,
+    )
+    assert resp.status_code == 200, resp.text
+    doc_id = resp.json()["doc_id"]
+
+    parsed = client.post(f"/api/v1/documents/{doc_id}/parse", headers=HEADERS_A)
+    assert parsed.status_code == 200
+
+    assert captured["kwargs"].get("shell") is False, "不得使用 shell=True"
+    cmd = captured["cmd"]
+    assert isinstance(cmd, (list, tuple)), f"命令必须以参数列表传入，实际是 {type(cmd).__name__}"
+    # 文件名必须整体作为单个参数，不能被拆成 shell 的多个 token
+    assert any(marker in str(part) for part in cmd), "文件名应作为一个整体参数保留"
