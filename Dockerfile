@@ -12,12 +12,22 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements-app.txt
 # ---------- 运行阶段 ----------
 FROM python:3.13-slim
 
-# 非 root 运行。固定 UID 便于在 K8s securityContext 里对齐 runAsUser。
-RUN useradd --create-home --uid 10001 appuser
+# 底座自带的 OS 包会带 CVE（镜像扫描扫的就是这些，依赖扫描看不到）。
+# 升级到当前安全版本；--no-install-recommends 避免顺手装进无关包。
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-# 只从 builder 拿装好的包，不复制 pip、wheel 等构建工具
 COPY --from=builder /install /usr/local
+
+# 运行期用不到 pip / setuptools / wheel，直接卸掉：
+#   1. 减少攻击面（镜像里不该有包管理器）
+#   2. pip 自带的 vendored 包（urllib3 等）会随之一并消失，CVE 数量随之下降
+RUN python -m pip uninstall -y pip setuptools wheel || true
+
+# 非 root 运行。固定 UID 便于在 K8s securityContext 里对齐 runAsUser。
+RUN useradd --create-home --uid 10001 appuser
 COPY app/ ./app/
 
 USER appuser
