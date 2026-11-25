@@ -175,7 +175,13 @@ jobs:
         run: mkdir -p reports
 
       - name: Build image
-        run: docker build -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
+        run: |
+          # --provenance=false：BuildKit 默认附加 provenance attestation，
+          # 会把镜像变成 manifest list。那样签名签的是 list 的 digest，
+          # 而准入控制器解析到的是平台 manifest 的 digest，两者对不上，
+          # 导致「已签名镜像也被拒绝」。关掉它让 digest 唯一。
+          docker build --provenance=false \
+            -t ghcr.io/${{ github.repository }}:${{ github.sha }} .
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -225,7 +231,7 @@ jobs:
           # --label 会改变镜像 config，因此 digest 与已签名镜像不同。
           # 这正是准入实验需要的对照物：内容不同，且没有签名。
           UNSIGNED=ghcr.io/${{ github.repository }}:unsigned
-          docker build -t "$UNSIGNED" --label org.example.signed=false .
+          docker build --provenance=false -t "$UNSIGNED" --label org.example.signed=false .
           docker push "$UNSIGNED" | tail -2
           docker inspect --format='{{index .RepoDigests 0}}' "$UNSIGNED"
 
