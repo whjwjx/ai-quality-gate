@@ -267,7 +267,10 @@ jobs:
 
       - name: Install Kyverno
         run: |
-          kubectl apply -f https://github.com/kyverno/kyverno/releases/latest/download/install.yaml
+          # 必须用 server-side apply：Kyverno 的 CRD 超过 256KB，
+          # 客户端 apply 会把它塞进 last-applied-configuration 注解，触发注解长度上限。
+          kubectl apply --server-side=true \
+            -f https://github.com/kyverno/kyverno/releases/latest/download/install.yaml
           kubectl -n kyverno wait --for=condition=Ready pods --all --timeout=300s
           kubectl wait --for=condition=Established crd/clusterpolicies.kyverno.io --timeout=120s
 
