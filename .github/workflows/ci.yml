@@ -404,9 +404,18 @@ jobs:
     if: always() && failure()  # TEMP: 测试用，验证后收紧为 dev only
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - name: Collect failed jobs and notify Feishu
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
         run: |
           FAILED=""
           [ "${{ needs.quality-gate.result }}" = "failure" ] && FAILED="$FAILED quality-gate"
@@ -419,9 +428,8 @@ jobs:
           [ -z "$FAILED" ] && FAILED="（未能识别，请查看运行日志）"
 
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          TEXT=$(printf '🔴 dev 门禁失败\n失败项：%s\n提交：%s\n作者：%s\n详情：%s' \
+          TEXT=$(printf '🔴 门禁失败\n失败项：%s\n提交：%s\n作者：%s\n详情：%s' \
             "$FAILED" "${GITHUB_SHA:0:7}" "${{ github.actor }}" "$RUN_URL")
 
-          # 用 jq 生成 JSON，避免中文/换行破坏 payload
-          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
-            | curl -sS -X POST "$FEISHU_WEBHOOK" -H "Content-Type: application/json" -d @-
+          # 用脚本而不是 curl 拼 JSON：签名要算 HmacSHA256，bash 里做不干净
+          python -m scripts.notify_feishu "$TEXT"

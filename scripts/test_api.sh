@@ -2,4 +2,5 @@
 # API 测试 + JUnit 报告，供 CI 归档。
 set -euo pipefail
 mkdir -p reports
-python -m pytest tests/test_api.py -v --junitxml=reports/api-results.xml
+# 跑全部单元测试（排除需要浏览器的 E2E，它由 test_e2e.sh 单独跑）
+python -m pytest tests/ -v --junitxml=reports/api-results.xml --ignore=tests/test_e2e.py
