@@ -303,8 +303,11 @@ jobs:
       - name: Apply verifyImages policy
         run: |
           kubectl apply -f policies/verify-images.yaml
-          kubectl wait --for=condition=Ready clusterpolicy/verify-image-signature --timeout=180s
-          kubectl get clusterpolicy verify-image-signature -o yaml | head -20
+          kubectl get imagevalidatingpolicy verify-image-signature
+          # 等 webhook 完成注册并缓存策略
+          sleep 15
+          kubectl get imagevalidatingpolicy verify-image-signature \
+            -o jsonpath='{.status}' || true
 
       - name: "Red B · policy on → signed admitted, unsigned rejected"
         run: |
