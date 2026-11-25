@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # 多阶段构建：builder 只负责装依赖，运行镜像里不留 pip 缓存和编译产物。
 # 这样做的收益：镜像更小、攻击面更小、Trivy 扫出来的无关 CVE 更少。
 

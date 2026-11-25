@@ -1,4 +1,5 @@
 # 缩小 build context：这些都不该进镜像，也不该被传给 Docker daemon。
+# 注意：Dockerfile 里 COPY 到的文件绝对不能列在这里，否则构建时找不到。
 .venv/
 .git/
 .github/
@@ -14,5 +15,4 @@ security/
 docs/
 tests/
 requirements.txt
-requirements-app.txt
 *.md
