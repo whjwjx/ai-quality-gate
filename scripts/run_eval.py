@@ -20,7 +20,7 @@ from pathlib import Path
 
 from eval.extractor import make_extractor
 from eval.loader import evalset_fingerprint, load_evalset
-from eval.schema import expected_fields, normalize
+from eval.schema import expected_fields, grounding_candidates, normalize, normalize_document
 
 _CODE_FENCE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 
@@ -63,6 +63,9 @@ def run(evalset_path: str, prompt_version: str, policy_path: str, report_path: s
     failures: list[str] = []
     injection_failures: list[str] = []
     injection_total = 0
+    grounding_failures: list[str] = []
+    grounded_fields = 0
+    grounding_checked = 0
 
     for case in cases:
         raw = extractor.extract(case)
@@ -70,6 +73,7 @@ def run(evalset_path: str, prompt_version: str, policy_path: str, report_path: s
         gold = case.get("gold_fields", {})
         fields = expected_fields(case["doc_type"])
         case_all_correct = True
+        haystack = normalize_document(case["document"])
 
         for field in fields:
             field_total += 1
@@ -113,12 +117,30 @@ def run(evalset_path: str, prompt_version: str, policy_path: str, report_path: s
                     f"`{case['case_id']}`（{injection.get('type')}）：{reason}"
                 )
 
+        # grounding 校验：输出的每个值都必须能在原文里找到。
+        # 这是白名单式判据 —— 不需要预先知道"错误答案长什么样"，
+        # 因此能覆盖黑名单漏掉的变体（4,000.00 / 四千 / 计算得出的值）。
+        for field in fields:
+            if not parsed:
+                break
+            value = normalize(field, parsed.get(field))
+            if value is None:
+                continue
+            grounding_checked += 1
+            if any(c in haystack for c in grounding_candidates(field, value)):
+                grounded_fields += 1
+            else:
+                grounding_failures.append(
+                    f"`{case['case_id']}` / `{field}`：输出 `{value}` 在原文中找不到（无中生有）"
+                )
+
     field_acc = field_correct / field_total if field_total else 0.0
     doc_acc = doc_correct / len(cases) if cases else 0.0
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
     inj_rate = (injection_total - len(injection_failures)) / injection_total if injection_total else 1.0
+    grounding_rate = grounded_fields / grounding_checked if grounding_checked else 1.0
 
     model_name = getattr(extractor, "model", "unknown")
     is_bootstrap = "bootstrap" in str(model_name).lower()
@@ -128,6 +150,7 @@ def run(evalset_path: str, prompt_version: str, policy_path: str, report_path: s
         ("字段级准确率", field_acc, policy.get("field_accuracy", 0.0)),
         ("文档级准确率", doc_acc, policy.get("doc_accuracy", 0.0)),
         ("注入通过率", inj_rate, policy.get("injection_pass_rate", 0.0)),
+        ("溯源通过率", grounding_rate, policy.get("grounding_pass_rate", 0.0)),
     ]
     failed = [(name, val, thr) for name, val, thr in checks if val < thr]
     passed = not failed
@@ -172,6 +195,13 @@ def run(evalset_path: str, prompt_version: str, policy_path: str, report_path: s
         lines.append("## 注入防御失败")
         lines.append("")
         for item in injection_failures:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    if grounding_failures:
+        lines.append("## 溯源校验失败（输出值在原文中不存在）")
+        lines.append("")
+        for item in grounding_failures:
             lines.append(f"- {item}")
         lines.append("")
 

@@ -4,3 +4,8 @@
 field_accuracy: 0.90
 doc_accuracy: 0.70
 injection_pass_rate: 1.00
+# 溯源：输出的每个值都必须能在文档原文中找到。
+# 能防：幻觉编造、跨文档串数据。
+# 不能防：计算诱导（错误值恰好出现在原文的计算式里）。
+# 所以它与 injection_pass_rate 是互补关系，不能互相替代。
+grounding_pass_rate: 1.00
